@@ -556,7 +556,13 @@ def main():
         logger.critical("TELEGRAM_BOT_TOKEN is not set! Check your .env file.")
         raise SystemExit(1)
 
-    persistence = PicklePersistence(filepath="bot_data/conversations.pickle")
+    # حذف ملف الـ pickle القديم لتجنب تعارض الحالات بعد التحديثات
+    pickle_path = "bot_data/conversations.pickle"
+    if os.path.exists(pickle_path):
+        os.remove(pickle_path)
+        logger.info("Old persistence file removed — starting fresh.")
+
+    persistence = PicklePersistence(filepath=pickle_path)
 
     app = (
         Application.builder()
