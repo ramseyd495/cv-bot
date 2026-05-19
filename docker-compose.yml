@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  cv_bot:
+    build: .
+    container_name: cv_telegram_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./bot_data:/app/bot_data
+    environment:
+      - PYTHONUNBUFFERED=1
