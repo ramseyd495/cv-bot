@@ -404,8 +404,180 @@ def generate_cv(data: dict, lang: str = 'en') -> str:
         raise
 
 
+
 # ════════════════════════════════════════
-#           CONVERT TO PDF
+#        ARABIC PDF (reportlab)
+# ════════════════════════════════════════
+
+def _ar(text: str) -> str:
+    """Reshape and reorder Arabic text for correct PDF display."""
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+        return get_display(arabic_reshaper.reshape(str(text)))
+    except Exception:
+        return str(text)
+
+
+def _get_arabic_font() -> tuple:
+    """Find Amiri or Noto Arabic font. Returns (regular_name, bold_name)."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    candidates = [
+        ('/app/fonts/Amiri-Regular.ttf',     '/app/fonts/Amiri-Bold.ttf',     'Amiri',   'AmiriBd'),
+        ('/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf',
+         '/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf', 'NotoAr', 'NotoArBd'),
+    ]
+    for reg_path, bold_path, reg_name, bold_name in candidates:
+        if os.path.exists(reg_path):
+            pdfmetrics.registerFont(TTFont(reg_name, reg_path))
+            if os.path.exists(bold_path):
+                pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+            else:
+                bold_name = reg_name
+            return reg_name, bold_name
+
+    return 'Helvetica', 'Helvetica-Bold'
+
+
+def generate_arabic_pdf(data: dict) -> str:
+    """
+    Generate a proper Arabic RTL PDF using reportlab.
+    Returns path to the generated PDF file.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib.colors import HexColor, white
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer,
+        HRFlowable, Table, TableStyle
+    )
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+
+    C_BLUE  = HexColor('#1A5276')
+    C_GRAY  = HexColor('#5D6D7E')
+    C_BLACK = HexColor('#1C1C1C')
+
+    font_reg, font_bold = _get_arabic_font()
+
+    def S(name, size, color, align=TA_RIGHT, bold=False):
+        return ParagraphStyle(
+            name, fontName=font_bold if bold else font_reg,
+            fontSize=size, textColor=color,
+            alignment=align, leading=size * 1.5,
+            wordWrap='RTL',
+        )
+
+    S_NAME    = S('name',    22, C_BLUE,  bold=True)
+    S_TITLE   = S('title',   11, C_GRAY)
+    S_CONTACT = S('contact',  8, C_GRAY,  align=TA_CENTER)
+    S_SECTION = S('section', 11, C_BLUE,  bold=True)
+    S_BODY    = S('body',    10, C_BLACK)
+    S_COMPANY = S('company', 10, C_BLUE)
+    S_GRAY    = S('gray',    10, C_GRAY)
+
+    def sec(title):
+        return [
+            Spacer(1, 0.3 * cm),
+            Paragraph(_ar(title), S_SECTION),
+            HRFlowable(width='100%', thickness=1, color=C_BLUE, spaceAfter=4),
+            Spacer(1, 0.1 * cm),
+        ]
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    tmp_path = tmp.name
+    tmp.close()
+
+    try:
+        doc = SimpleDocTemplate(
+            tmp_path, pagesize=A4,
+            rightMargin=1.8*cm, leftMargin=1.8*cm,
+            topMargin=1.5*cm,   bottomMargin=1.5*cm,
+        )
+        story = []
+
+        # ── Header ──
+        story.append(Paragraph(_ar(data['name']), S_NAME))
+        story.append(Spacer(1, 0.1 * cm))
+        story.append(Paragraph(_ar(data['job_title']), S_TITLE))
+        story.append(Spacer(1, 0.2 * cm))
+
+        contact_parts = [data['email'], data['phone'], data['location']]
+        if data.get('linkedin'):
+            contact_parts.append(data['linkedin'])
+        if data.get('github'):
+            contact_parts.append(data['github'])
+        story.append(Paragraph('  |  '.join(contact_parts), S_CONTACT))
+        story.append(HRFlowable(width='100%', thickness=1.5, color=C_BLUE, spaceBefore=6, spaceAfter=2))
+
+        # ── Summary ──
+        story.extend(sec(LABELS['ar']['summary']))
+        story.append(Paragraph(_ar(data['summary']), S_BODY))
+
+        # ── Experience ──
+        story.extend(sec(LABELS['ar']['experience']))
+        for exp in data['experiences']:
+            story.append(Spacer(1, 0.15 * cm))
+            line = f"{_ar(exp['date'])}    |    {_ar(exp['title'])}"
+            story.append(Paragraph(line, S_BODY))
+            story.append(Paragraph(_ar(exp['company']), S_COMPANY))
+            for b in exp['bullets']:
+                story.append(Paragraph(f"◀  {_ar(b)}", S_BODY))
+
+        # ── Education ──
+        story.extend(sec(LABELS['ar']['education']))
+        story.append(Paragraph(
+            f"{_ar(data['edu_date'])}    |    {_ar(data['edu_degree'])}", S_BODY
+        ))
+        story.append(Paragraph(_ar(data['edu_university']), S_GRAY))
+
+        # ── Skills ──
+        story.extend(sec(LABELS['ar']['skills']))
+        skills = data['skills']
+        half   = (len(skills) + 1) // 2
+        col_w  = (A4[0] - 3.6 * cm) / 2
+        rows   = []
+        for i in range(half):
+            l = Paragraph(f"◀  {_ar(skills[i])}", S_BODY)
+            r = Paragraph(f"◀  {_ar(skills[half + i])}", S_BODY) if (half + i) < len(skills) else Paragraph('', S_BODY)
+            rows.append([l, r])
+        if rows:
+            t = Table(rows, colWidths=[col_w, col_w])
+            t.setStyle(TableStyle([
+                ('ALIGN',   (0, 0), (-1, -1), 'RIGHT'),
+                ('VALIGN',  (0, 0), (-1, -1), 'TOP'),
+                ('GRID',    (0, 0), (-1, -1), 0, white),
+                ('TOPPADDING',    (0, 0), (-1, -1), 2),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+            ]))
+            story.append(t)
+
+        # ── Certificates ──
+        if data.get('certificates'):
+            story.extend(sec(LABELS['ar']['certificates']))
+            for cert in data['certificates']:
+                line = f"{_ar(cert['date'])}  |  {_ar(cert['issuer'])}  —  {_ar(cert['name'])}"
+                story.append(Paragraph(line, S_BODY))
+
+        # ── Languages ──
+        story.extend(sec(LABELS['ar']['languages']))
+        story.append(Paragraph(_ar(data['languages']), S_BODY))
+
+        doc.build(story)
+        logger.info(f"Arabic PDF generated: {tmp_path}")
+        return tmp_path
+
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        logger.error(f"Arabic PDF generation failed: {e}")
+        raise
+
+
+# ════════════════════════════════════════
+#        ENGLISH PDF (LibreOffice)
 # ════════════════════════════════════════
 
 def _find_libreoffice() -> str:
@@ -423,6 +595,7 @@ def _find_libreoffice() -> str:
 
 
 def convert_to_pdf(docx_path: str) -> str:
+    """Convert English DOCX to PDF via LibreOffice."""
     tmp_dir = tempfile.mkdtemp()
     try:
         lo_bin = _find_libreoffice()
@@ -441,3 +614,4 @@ def convert_to_pdf(docx_path: str) -> str:
     except Exception:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
+

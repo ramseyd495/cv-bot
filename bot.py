@@ -7,7 +7,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ConversationHandler, ContextTypes, filters, PicklePersistence
 )
-from cv_generator import generate_cv, convert_to_pdf
+from cv_generator import generate_cv, generate_arabic_pdf, convert_to_pdf
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -492,11 +492,11 @@ async def get_export_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pdf_path  = None
     try:
         lang = context.user_data.get('lang', 'en')
-        docx_path = generate_cv(context.user_data, lang=lang)
         name_clean = context.user_data['name'].replace(' ', '_')
 
-        if fmt == 'pdf':
-            pdf_path = convert_to_pdf(docx_path)
+        if fmt == 'pdf' and lang == 'ar':
+            # Arabic: generate PDF directly via reportlab (proper RTL)
+            pdf_path = generate_arabic_pdf(context.user_data)
             with open(pdf_path, 'rb') as f:
                 await update.callback_query.message.reply_document(
                     document=f,
@@ -504,18 +504,29 @@ async def get_export_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption="✅ هذا هو CV الخاص بك بصيغة PDF!"
                 )
         else:
-            with open(docx_path, 'rb') as f:
-                await update.callback_query.message.reply_document(
-                    document=f,
-                    filename=f"CV_{name_clean}.docx",
-                    caption="✅ هذا هو CV الخاص بك بصيغة Word!"
-                )
+            docx_path = generate_cv(context.user_data, lang=lang)
+            if fmt == 'pdf':
+                pdf_path = convert_to_pdf(docx_path)
+                with open(pdf_path, 'rb') as f:
+                    await update.callback_query.message.reply_document(
+                        document=f,
+                        filename=f"CV_{name_clean}.pdf",
+                        caption="✅ هذا هو CV الخاص بك بصيغة PDF!"
+                    )
+            else:
+                with open(docx_path, 'rb') as f:
+                    await update.callback_query.message.reply_document(
+                        document=f,
+                        filename=f"CV_{name_clean}.docx",
+                        caption="✅ هذا هو CV الخاص بك بصيغة Word!"
+                    )
 
         await update.callback_query.message.reply_text(
             "🌟 شكراً لاستخدام الخدمة!\n"
             "يمكنك إنشاء CV جديد بكتابة /start"
         )
         logger.info(f"CV sent successfully to user {user.id}")
+
 
     except FileNotFoundError as e:
         logger.error(f"LibreOffice not found for user {user.id}: {e}")
