@@ -11,10 +11,30 @@ from docx.oxml import OxmlElement
 logger = logging.getLogger(__name__)
 
 # ─── Colors ───
-BLUE  = RGBColor(0x1A, 0x52, 0x76)
-GRAY  = RGBColor(0x5D, 0x6D, 0x7E)
-BLACK = RGBColor(0x1C, 0x1C, 0x1C)
+BLUE     = RGBColor(0x1A, 0x52, 0x76)
+GRAY     = RGBColor(0x5D, 0x6D, 0x7E)
+BLACK    = RGBColor(0x1C, 0x1C, 0x1C)
 BLUE_HEX = "1A5276"
+
+# ─── Section Labels ───
+LABELS = {
+    'en': {
+        'summary':      'Professional Summary',
+        'experience':   'Experience',
+        'education':    'Education',
+        'skills':       'Skills',
+        'certificates': 'Certificates',
+        'languages':    'Languages',
+    },
+    'ar': {
+        'summary':      'الملخص المهني',
+        'experience':   'الخبرات العملية',
+        'education':    'التعليم',
+        'skills':       'المهارات',
+        'certificates': 'الشهادات والدورات',
+        'languages':    'اللغات',
+    }
+}
 
 
 # ════════════════════════════════════════
@@ -22,17 +42,57 @@ BLUE_HEX = "1A5276"
 # ════════════════════════════════════════
 
 def font(run, size, color=None, bold=False, italic=False):
-    """Apply font styling to a run"""
     run.font.name = 'Arial'
     run.font.size = Pt(size)
     if color:
         run.font.color.rgb = color
-    run.font.bold = bold
+    run.font.bold   = bold
     run.font.italic = italic
 
 
+def set_rtl(para):
+    """Make paragraph RTL (Arabic direction)."""
+    pPr = para._p.get_or_add_pPr()
+    # bidi direction
+    bidi = OxmlElement('w:bidi')
+    pPr.append(bidi)
+    # right alignment
+    jc = OxmlElement('w:jc')
+    jc.set(qn('w:val'), 'right')
+    pPr.append(jc)
+
+
+def set_rtl_run(run):
+    """Mark a run as RTL."""
+    rPr = run._r.get_or_add_rPr()
+    rtl_el = OxmlElement('w:rtl')
+    rPr.append(rtl_el)
+    # complex script font
+    cs = OxmlElement('w:cs')
+    cs.set(qn('w:val'), 'Arial')
+    rPr.append(cs)
+
+
+def apply_rtl_to_para(para):
+    """Apply RTL to paragraph and all its runs."""
+    set_rtl(para)
+    for run in para.runs:
+        set_rtl_run(run)
+
+
+def add_left_tab(para, position=9026):
+    """Left-aligned tab (used for dates in RTL mode)."""
+    pPr = para._p.get_or_add_pPr()
+    tabs = OxmlElement('w:tabs')
+    tab = OxmlElement('w:tab')
+    tab.set(qn('w:val'), 'left')
+    tab.set(qn('w:pos'), str(position))
+    tabs.append(tab)
+    pPr.append(tabs)
+
+
 def add_right_tab(para, position=9026):
-    """Add a right-aligned tab stop to paragraph"""
+    """Right-aligned tab (used for dates in LTR mode)."""
     pPr = para._p.get_or_add_pPr()
     tabs = OxmlElement('w:tabs')
     tab = OxmlElement('w:tab')
@@ -42,14 +102,18 @@ def add_right_tab(para, position=9026):
     pPr.append(tabs)
 
 
-def add_section_divider(doc, title):
-    """Section title with blue bottom border"""
+def add_section_divider(doc, title, rtl=False):
+    """Section title with blue bottom border."""
     para = doc.add_paragraph()
     para.paragraph_format.space_before = Pt(14)
-    para.paragraph_format.space_after = Pt(4)
+    para.paragraph_format.space_after  = Pt(4)
 
-    run = para.add_run(title.upper())
+    run = para.add_run(title.upper() if not rtl else title)
     font(run, 12, BLUE, bold=True)
+
+    if rtl:
+        set_rtl(para)
+        set_rtl_run(run)
 
     pPr = para._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
@@ -63,8 +127,7 @@ def add_section_divider(doc, title):
 
 
 def remove_cell_borders(cell):
-    """Remove all borders from a table cell"""
-    tc = cell._tc
+    tc   = cell._tc
     tcPr = tc.get_or_add_tcPr()
     tcBorders = OxmlElement('w:tcBorders')
     for side in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
@@ -76,37 +139,57 @@ def remove_cell_borders(cell):
     tcPr.append(tcBorders)
 
 
-def add_job_entry(doc, title, company, date_range, bullets):
-    """Add a work experience block"""
+def add_job_entry(doc, title, company, date_range, bullets, rtl=False):
+    """Work experience block — supports LTR and RTL."""
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(10)
-    p.paragraph_format.space_after = Pt(2)
-    add_right_tab(p)
-    font(p.add_run(title), 11, BLACK, bold=True)
-    p.add_run('\t').font.name = 'Arial'
-    font(p.add_run(date_range), 10, GRAY)
+    p.paragraph_format.space_after  = Pt(2)
+
+    if rtl:
+        # In RTL: title on right, date on left
+        set_rtl(p)
+        r_title = p.add_run(title)
+        font(r_title, 11, BLACK, bold=True)
+        set_rtl_run(r_title)
+        r_sep = p.add_run('    |    ')
+        font(r_sep, 10, GRAY)
+        r_date = p.add_run(date_range)
+        font(r_date, 10, GRAY)
+        set_rtl_run(r_date)
+    else:
+        add_right_tab(p)
+        font(p.add_run(title), 11, BLACK, bold=True)
+        p.add_run('\t').font.name = 'Arial'
+        font(p.add_run(date_range), 10, GRAY)
 
     pc = doc.add_paragraph()
     pc.paragraph_format.space_before = Pt(0)
-    pc.paragraph_format.space_after = Pt(4)
-    font(pc.add_run(company), 10, BLUE, italic=True)
+    pc.paragraph_format.space_after  = Pt(4)
+    r_co = pc.add_run(company)
+    font(r_co, 10, BLUE, italic=True)
+    if rtl:
+        set_rtl(pc)
+        set_rtl_run(r_co)
 
     for b in bullets:
         pb = doc.add_paragraph(style='List Bullet')
         pb.paragraph_format.space_before = Pt(2)
-        pb.paragraph_format.space_after = Pt(2)
-        font(pb.add_run(b), 10, BLACK)
+        pb.paragraph_format.space_after  = Pt(2)
+        r_b = pb.add_run(b)
+        font(r_b, 10, BLACK)
+        if rtl:
+            set_rtl(pb)
+            set_rtl_run(r_b)
 
 
-def add_skills_table(doc, skills):
-    """Two-column borderless skills table"""
-    half = (len(skills) + 1) // 2
+def add_skills_table(doc, skills, rtl=False):
+    """Two-column borderless skills table."""
+    half  = (len(skills) + 1) // 2
     left  = skills[:half]
     right = skills[half:]
 
     table = doc.add_table(rows=half, cols=2)
-
-    tbl = table._tbl
+    tbl   = table._tbl
     tblPr = tbl.tblPr if tbl.tblPr is not None else OxmlElement('w:tblPr')
     tblBorders = OxmlElement('w:tblBorders')
     for side in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
@@ -114,6 +197,11 @@ def add_skills_table(doc, skills):
         el.set(qn('w:val'), 'none')
         tblBorders.append(el)
     tblPr.append(tblBorders)
+
+    # RTL table direction
+    if rtl:
+        bidiVisual = OxmlElement('w:bidiVisual')
+        tblPr.append(bidiVisual)
 
     for i in range(half):
         row = table.rows[i]
@@ -123,8 +211,14 @@ def add_skills_table(doc, skills):
         remove_cell_borders(cl)
         pl = cl.paragraphs[0]
         pl.clear()
-        font(pl.add_run("▸ "), 10, BLUE)
-        font(pl.add_run(left[i] if i < len(left) else ""), 10, BLACK)
+        r1 = pl.add_run("▸ ")
+        font(r1, 10, BLUE)
+        r2 = pl.add_run(left[i] if i < len(left) else "")
+        font(r2, 10, BLACK)
+        if rtl:
+            set_rtl(pl)
+            set_rtl_run(r1)
+            set_rtl_run(r2)
 
         cr = row.cells[1]
         cr.width = Twips(4513)
@@ -132,21 +226,30 @@ def add_skills_table(doc, skills):
         if i < len(right):
             pr = cr.paragraphs[0]
             pr.clear()
-            font(pr.add_run("▸ "), 10, BLUE)
-            font(pr.add_run(right[i]), 10, BLACK)
+            r3 = pr.add_run("▸ ")
+            font(r3, 10, BLUE)
+            r4 = pr.add_run(right[i])
+            font(r4, 10, BLACK)
+            if rtl:
+                set_rtl(pr)
+                set_rtl_run(r3)
+                set_rtl_run(r4)
 
 
 # ════════════════════════════════════════
 #           GENERATE CV (DOCX)
 # ════════════════════════════════════════
 
-def generate_cv(data: dict) -> str:
+def generate_cv(data: dict, lang: str = 'en') -> str:
     """
     Build a DOCX CV from user data.
-    Returns path to the generated temp file.
-    Raises exception on failure.
+    lang: 'en' (LTR) or 'ar' (RTL)
+    Returns path to temp file.
     """
+    rtl    = (lang == 'ar')
+    labels = LABELS[lang]
     tmp_path = None
+
     try:
         doc = Document()
 
@@ -160,12 +263,21 @@ def generate_cv(data: dict) -> str:
         # ── HEADER ──────────────────────────
         p_name = doc.add_paragraph()
         p_name.paragraph_format.space_after = Pt(2)
-        font(p_name.add_run(data['name']), 26, BLUE, bold=True)
+        r_name = p_name.add_run(data['name'])
+        font(r_name, 26, BLUE, bold=True)
+        if rtl:
+            set_rtl(p_name)
+            set_rtl_run(r_name)
 
         p_title = doc.add_paragraph()
         p_title.paragraph_format.space_after = Pt(6)
-        font(p_title.add_run(data['job_title']), 12, GRAY)
+        r_title = p_title.add_run(data['job_title'])
+        font(r_title, 12, GRAY)
+        if rtl:
+            set_rtl(p_title)
+            set_rtl_run(r_title)
 
+        # Contact line
         contact_parts = [
             f"📧 {data['email']}",
             f"📞 {data['phone']}",
@@ -178,70 +290,114 @@ def generate_cv(data: dict) -> str:
 
         p_contact = doc.add_paragraph()
         p_contact.paragraph_format.space_after = Pt(12)
-        font(p_contact.add_run("   |   ".join(contact_parts)), 9, GRAY)
+        r_contact = p_contact.add_run("   |   ".join(contact_parts))
+        font(r_contact, 9, GRAY)
+        if rtl:
+            set_rtl(p_contact)
+            set_rtl_run(r_contact)
 
         # ── SUMMARY ─────────────────────────
-        add_section_divider(doc, "Professional Summary")
+        add_section_divider(doc, labels['summary'], rtl=rtl)
         p_sum = doc.add_paragraph()
         p_sum.paragraph_format.space_before = Pt(4)
         p_sum.paragraph_format.space_after  = Pt(10)
-        font(p_sum.add_run(data['summary']), 10, BLACK)
+        r_sum = p_sum.add_run(data['summary'])
+        font(r_sum, 10, BLACK)
+        if rtl:
+            set_rtl(p_sum)
+            set_rtl_run(r_sum)
 
         # ── EXPERIENCE ──────────────────────
-        add_section_divider(doc, "Experience")
+        add_section_divider(doc, labels['experience'], rtl=rtl)
         for exp in data['experiences']:
-            add_job_entry(doc, exp['title'], exp['company'], exp['date'], exp['bullets'])
+            add_job_entry(doc, exp['title'], exp['company'],
+                          exp['date'], exp['bullets'], rtl=rtl)
 
         # ── EDUCATION ───────────────────────
-        add_section_divider(doc, "Education")
+        add_section_divider(doc, labels['education'], rtl=rtl)
         p_edu = doc.add_paragraph()
         p_edu.paragraph_format.space_before = Pt(8)
         p_edu.paragraph_format.space_after  = Pt(2)
-        add_right_tab(p_edu)
-        font(p_edu.add_run(data['edu_degree']), 11, BLACK, bold=True)
-        p_edu.add_run('\t').font.name = 'Arial'
-        font(p_edu.add_run(data['edu_date']), 10, GRAY)
+
+        if rtl:
+            set_rtl(p_edu)
+            r_deg = p_edu.add_run(data['edu_degree'])
+            font(r_deg, 11, BLACK, bold=True)
+            set_rtl_run(r_deg)
+            r_sep2 = p_edu.add_run('    |    ')
+            font(r_sep2, 10, GRAY)
+            r_date2 = p_edu.add_run(data['edu_date'])
+            font(r_date2, 10, GRAY)
+            set_rtl_run(r_date2)
+        else:
+            add_right_tab(p_edu)
+            font(p_edu.add_run(data['edu_degree']), 11, BLACK, bold=True)
+            p_edu.add_run('\t').font.name = 'Arial'
+            font(p_edu.add_run(data['edu_date']), 10, GRAY)
 
         p_uni = doc.add_paragraph()
         p_uni.paragraph_format.space_before = Pt(0)
         p_uni.paragraph_format.space_after  = Pt(10)
-        font(p_uni.add_run(data['edu_university']), 10, GRAY, italic=True)
+        r_uni = p_uni.add_run(data['edu_university'])
+        font(r_uni, 10, GRAY, italic=True)
+        if rtl:
+            set_rtl(p_uni)
+            set_rtl_run(r_uni)
 
         # ── SKILLS ──────────────────────────
-        add_section_divider(doc, "Skills")
+        add_section_divider(doc, labels['skills'], rtl=rtl)
         doc.add_paragraph().paragraph_format.space_before = Pt(6)
-        add_skills_table(doc, data['skills'])
+        add_skills_table(doc, data['skills'], rtl=rtl)
 
         # ── CERTIFICATES ────────────────────
         if data.get('certificates'):
-            add_section_divider(doc, "Certificates")
+            add_section_divider(doc, labels['certificates'], rtl=rtl)
             for cert in data['certificates']:
                 p_cert = doc.add_paragraph()
                 p_cert.paragraph_format.space_before = Pt(4)
                 p_cert.paragraph_format.space_after  = Pt(2)
-                add_right_tab(p_cert)
-                font(p_cert.add_run(cert['name']), 10, BLACK, bold=True)
-                font(p_cert.add_run(' — '), 10, GRAY)
-                font(p_cert.add_run(cert['issuer']), 10, GRAY, italic=True)
-                p_cert.add_run('\t').font.name = 'Arial'
-                font(p_cert.add_run(cert['date']), 10, GRAY)
+                if rtl:
+                    set_rtl(p_cert)
+                    r_cn = p_cert.add_run(cert['name'])
+                    font(r_cn, 10, BLACK, bold=True)
+                    set_rtl_run(r_cn)
+                    r_sep3 = p_cert.add_run(' — ')
+                    font(r_sep3, 10, GRAY)
+                    r_ci = p_cert.add_run(cert['issuer'])
+                    font(r_ci, 10, GRAY, italic=True)
+                    set_rtl_run(r_ci)
+                    r_sep4 = p_cert.add_run('    |    ')
+                    font(r_sep4, 10, GRAY)
+                    r_cd = p_cert.add_run(cert['date'])
+                    font(r_cd, 10, GRAY)
+                    set_rtl_run(r_cd)
+                else:
+                    add_right_tab(p_cert)
+                    font(p_cert.add_run(cert['name']), 10, BLACK, bold=True)
+                    font(p_cert.add_run(' — '), 10, GRAY)
+                    font(p_cert.add_run(cert['issuer']), 10, GRAY, italic=True)
+                    p_cert.add_run('\t').font.name = 'Arial'
+                    font(p_cert.add_run(cert['date']), 10, GRAY)
 
         # ── LANGUAGES ───────────────────────
-        add_section_divider(doc, "Languages")
+        add_section_divider(doc, labels['languages'], rtl=rtl)
         p_lang = doc.add_paragraph()
         p_lang.paragraph_format.space_before = Pt(6)
-        font(p_lang.add_run(data['languages']), 10, BLACK)
+        r_lang = p_lang.add_run(data['languages'])
+        font(r_lang, 10, BLACK)
+        if rtl:
+            set_rtl(p_lang)
+            set_rtl_run(r_lang)
 
         # Save to temp file
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.docx')
         tmp_path = tmp.name
         tmp.close()
         doc.save(tmp_path)
-        logger.info(f"CV generated: {tmp_path}")
+        logger.info(f"CV generated ({lang}): {tmp_path}")
         return tmp_path
 
     except Exception as e:
-        # Clean up on failure
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
         logger.error(f"CV generation failed: {e}")
@@ -253,55 +409,35 @@ def generate_cv(data: dict) -> str:
 # ════════════════════════════════════════
 
 def _find_libreoffice() -> str:
-    """Find LibreOffice binary across different OS paths."""
     candidates = [
-        'libreoffice',
-        'soffice',
-        '/usr/bin/libreoffice',
-        '/usr/bin/soffice',
+        'libreoffice', 'soffice',
+        '/usr/bin/libreoffice', '/usr/bin/soffice',
         '/usr/lib/libreoffice/program/soffice',
         r'C:\Program Files\LibreOffice\program\soffice.exe',
         r'C:\Program Files (x86)\LibreOffice\program\soffice.exe',
     ]
-    for candidate in candidates:
-        if shutil.which(candidate) or os.path.exists(candidate):
-            return candidate
-    raise FileNotFoundError(
-        "LibreOffice not found. Install it or use Word format instead."
-    )
+    for c in candidates:
+        if shutil.which(c) or os.path.exists(c):
+            return c
+    raise FileNotFoundError("LibreOffice not found.")
 
 
 def convert_to_pdf(docx_path: str) -> str:
-    """
-    Convert DOCX to PDF using LibreOffice.
-    Returns path to the generated PDF file.
-    Raises exception with clear message on failure.
-    """
     tmp_dir = tempfile.mkdtemp()
     try:
         lo_bin = _find_libreoffice()
-
         result = subprocess.run(
             [lo_bin, '--headless', '--convert-to', 'pdf',
              '--outdir', tmp_dir, docx_path],
-            capture_output=True,
-            text=True,
-            timeout=60
+            capture_output=True, text=True, timeout=60
         )
-
         if result.returncode != 0:
             raise Exception(f"LibreOffice error: {result.stderr.strip()}")
-
         base_name = os.path.splitext(os.path.basename(docx_path))[0]
         pdf_path  = os.path.join(tmp_dir, base_name + '.pdf')
-
         if not os.path.exists(pdf_path):
-            raise Exception("PDF file not found after conversion")
-
-        logger.info(f"PDF converted: {pdf_path}")
+            raise Exception("PDF not found after conversion")
         return pdf_path
-
     except Exception:
-        # Clean up temp dir on failure
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # ── States ─────────────────────────────
 (
+    CV_LANG,
     NAME, JOB_TITLE, EMAIL, PHONE, LOCATION, LINKEDIN, GITHUB,
     SUMMARY,
     EXP_TITLE, EXP_COMPANY, EXP_DATE, EXP_BULLETS, EXP_MORE,
@@ -39,9 +40,15 @@ logger = logging.getLogger(__name__)
     CERT_ADD, CERT_NAME, CERT_ISSUER, CERT_DATE, CERT_MORE,
     LANGUAGES,
     EXPORT_FORMAT
-) = range(24)
+) = range(25)
 
 # ── Keyboards ──────────────────────────
+def lang_kb():
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🇸🇦 عربي", callback_data="lang_ar"),
+        InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")
+    ]])
+
 def yes_no_kb():
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ نعم", callback_data="yes"),
@@ -56,7 +63,7 @@ def export_kb():
 
 def skip_kb():
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("⏭️ تخطي", callback_data="skip")
+        InlineKeyboardButton("⏭️ تخطي / Skip", callback_data="skip")
     ]])
 
 # ── Validation ─────────────────────────
@@ -80,15 +87,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     logger.info(f"User {user.id} ({user.username}) started new CV")
     await update.message.reply_text(
-        "👋 *مرحباً بك في خدمة إنشاء CV الاحترافي!*\n\n"
-        "سأطرح عليك بعض الأسئلة البسيطة وسأُعدّ لك\n"
-        "سيرة ذاتية احترافية جاهزة للتحميل.\n\n"
-        "اكتب /cancel في أي وقت للإلغاء.\n"
-        "اكتب /help للمساعدة.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📝 *ما اسمك الكامل؟*",
+        "👋 *Welcome / مرحباً!*\n\n"
+        "🌐 *اختر لغة الـ CV / Choose CV language:*",
+        reply_markup=lang_kb(),
         parse_mode='Markdown'
     )
+    return CV_LANG
+
+
+async def get_cv_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    lang = 'ar' if update.callback_query.data == 'lang_ar' else 'en'
+    context.user_data['lang'] = lang
+
+    if lang == 'ar':
+        prompt = (
+            "✅ *تم اختيار العربية*\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📝 *ما اسمك الكامل؟*"
+        )
+    else:
+        prompt = (
+            "✅ *English selected*\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📝 *What is your full name?*"
+        )
+
+    await update.callback_query.message.reply_text(prompt, parse_mode='Markdown')
     return NAME
 
 
@@ -466,7 +491,8 @@ async def get_export_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
     docx_path = None
     pdf_path  = None
     try:
-        docx_path = generate_cv(context.user_data)
+        lang = context.user_data.get('lang', 'en')
+        docx_path = generate_cv(context.user_data, lang=lang)
         name_clean = context.user_data['name'].replace(' ', '_')
 
         if fmt == 'pdf':
@@ -542,6 +568,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
+            CV_LANG: [CallbackQueryHandler(get_cv_lang, pattern='^lang_(ar|en)$')],
             NAME:          [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             JOB_TITLE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, get_job_title)],
             EMAIL:         [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)],
